@@ -10,31 +10,39 @@ from vysync.diff import diff_entities
 from vysync.app_logging import init_logger
 
 logger = init_logger(__name__)
+from vysync.adapters.yuman_adapter import YumanAdapter
 
 def main():
-    parser = argparse.ArgumentParser(description="Sync VCOM → Supabase (snapshot/diff)")
+    parser = argparse.ArgumentParser(description="Sync VCOM ↔ Supabase ↔ Yuman (snapshot/diff)")
     args = parser.parse_args()
 
+    # 0. Init clients
     vc = VCOMAPIClient()
     sb = SupabaseAdapter()
+    ya = YumanAdapter(sb)
 
-    # 1. snapshots
+    # 1. VCOM ➜ DB --------------------------------------------------------
     v_sites, v_equips = vcom_snapshot(vc)
     db_sites = sb.fetch_sites()
     db_equips = sb.fetch_equipments()
 
-    # 2. diff
     patch_sites = diff_entities(db_sites, v_sites)
     patch_equips = diff_entities(db_equips, v_equips)
 
-    logger.info("Sites Δ: +%s / ~%s / -%s", len(patch_sites.add), len(patch_sites.update), len(patch_sites.delete))
-    logger.info("Equips Δ: +%s / ~%s / -%s", len(patch_equips.add), len(patch_equips.update), len(patch_equips.delete))
+    logger.info("[VCOM→DB] Sites Δ +%s ~%s -%s", *map(len, patch_sites))
+    logger.info("[VCOM→DB] Equips Δ +%s ~%s -%s", *map(len, patch_equips))
 
-    # 3. apply patches
     sb.apply_sites_patch(patch_sites)
     sb.apply_equips_patch(patch_equips)
 
-    logger.info("✅ DB updated successfully")
+    # 2. DB ➜ Yuman -------------------------------------------------------
+    db_sites = sb.fetch_sites()          # refresh after insert
+    db_equips = sb.fetch_equipments()
+
+    ya.apply_sites_patch(db_sites)
+    ya.apply_equips_patch(db_equips)
+
+    logger.info("✅ Synchronisation complète terminée")
 
 if __name__ == "__main__":
     main()
